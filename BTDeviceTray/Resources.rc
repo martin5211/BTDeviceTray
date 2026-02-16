@@ -1,0 +1,4 @@
+#include "resource.h"
+#include <winres.h>
+
+IDI_BLUETRAY ICON "Assets\\BTDeviceTray.ico"

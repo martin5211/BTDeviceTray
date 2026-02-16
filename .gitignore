@@ -1,0 +1,34 @@
+# Build outputs
+x64/
+Debug/
+Release/
+*.obj
+*.pdb
+*.exe
+*.ilk
+*.log
+*.tlog
+*.lastbuildstate
+*.idb
+*.pch
+*.ipch
+*.res
+.claude/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.sln.docstates
+*.vcxproj.user
+
+# NuGet packages
+packages/
+
+# Generated files
+BTDeviceTray/x64/
+BTDeviceTray/Generated Files/
+
+# OS files
+Thumbs.db
+desktop.ini

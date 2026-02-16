@@ -1,7 +1,9 @@
 #include "pch.h"
 #include "BluetoothDeviceManager.h"
+#include <setupapi.h>
 
 #pragma comment(lib, "bthprops.lib")
+#pragma comment(lib, "setupapi.lib")
 
 namespace WDB = winrt::Windows::Devices::Bluetooth;
 namespace WDBG = winrt::Windows::Devices::Bluetooth::GenericAttributeProfile;
@@ -103,6 +105,74 @@ static bool DisconnectBluetoothAcl(uint64_t btAddress)
 
     DebugLog(L"[BTDevTray] ACL disconnect ok=%d err=%lu\n", ok, err);
     return ok != FALSE;
+}
+
+// Disconnect a BLE device by toggling its PnP device node (disable then re-enable).
+// This forces the system HID/GATT driver to release the connection.
+static bool DisconnectBleDeviceNode(uint64_t btAddress)
+{
+    wchar_t addrHex[13];
+    _snwprintf_s(addrHex, _countof(addrHex), _TRUNCATE, L"%012llX", btAddress);
+    std::wstring addrUpper(addrHex);
+
+    DebugLog(L"[BTDevTray] DisconnectBleDeviceNode addr=%s\n", addrHex);
+
+    HDEVINFO devInfoSet = SetupDiGetClassDevsW(
+        nullptr, L"BTHLE", nullptr, DIGCF_ALLCLASSES | DIGCF_PRESENT);
+    if (devInfoSet == INVALID_HANDLE_VALUE)
+    {
+        DebugLog(L"[BTDevTray] SetupDiGetClassDevs BTHLE failed\n");
+        return false;
+    }
+
+    SP_DEVINFO_DATA devInfoData = {};
+    devInfoData.cbSize = sizeof(devInfoData);
+    bool disconnected = false;
+
+    for (DWORD i = 0; SetupDiEnumDeviceInfo(devInfoSet, i, &devInfoData); ++i)
+    {
+        wchar_t instanceId[512];
+        if (!SetupDiGetDeviceInstanceIdW(devInfoSet, &devInfoData, instanceId, _countof(instanceId), nullptr))
+            continue;
+
+        std::wstring idStr(instanceId);
+        std::transform(idStr.begin(), idStr.end(), idStr.begin(), ::towupper);
+        if (idStr.find(addrUpper) == std::wstring::npos)
+            continue;
+
+        DebugLog(L"[BTDevTray] Found BLE device node: %s\n", instanceId);
+
+        SP_PROPCHANGE_PARAMS params = {};
+        params.ClassInstallHeader.cbSize = sizeof(SP_CLASSINSTALL_HEADER);
+        params.ClassInstallHeader.InstallFunction = DIF_PROPERTYCHANGE;
+        params.Scope = DICS_FLAG_GLOBAL;
+
+        // Disable
+        params.StateChange = DICS_DISABLE;
+        SetupDiSetClassInstallParamsW(devInfoSet, &devInfoData,
+            &params.ClassInstallHeader, sizeof(params));
+        if (SetupDiCallClassInstaller(DIF_PROPERTYCHANGE, devInfoSet, &devInfoData))
+        {
+            DebugLog(L"[BTDevTray] BLE device node disabled\n");
+            Sleep(200);
+
+            // Re-enable so it can be connected again later
+            params.StateChange = DICS_ENABLE;
+            SetupDiSetClassInstallParamsW(devInfoSet, &devInfoData,
+                &params.ClassInstallHeader, sizeof(params));
+            SetupDiCallClassInstaller(DIF_PROPERTYCHANGE, devInfoSet, &devInfoData);
+            DebugLog(L"[BTDevTray] BLE device node re-enabled\n");
+
+            disconnected = true;
+        }
+        else
+        {
+            DebugLog(L"[BTDevTray] BLE device node disable failed err=%lu\n", GetLastError());
+        }
+    }
+
+    SetupDiDestroyDeviceInfoList(devInfoSet);
+    return disconnected;
 }
 
 // Connect or disconnect a Bluetooth audio device via its kernel streaming filter.
@@ -590,7 +660,6 @@ void BluetoothDeviceManager::DisconnectAsync(const std::wstring& deviceId)
 
     if (btAddress != 0)
     {
-        // Disconnect audio profile + ACL link on a background thread
         [](uint64_t addr, DeviceType devType) -> winrt::fire_and_forget
         {
             co_await winrt::resume_background();
@@ -600,9 +669,15 @@ void BluetoothDeviceManager::DisconnectAsync(const std::wstring& deviceId)
                 // Disconnect audio profile via IKsControl
                 ReconnectBluetoothAudio(addr, false);
             }
+            else
+            {
+                // BLE: toggle the device node to force the system driver to disconnect
+                DisconnectBleDeviceNode(addr);
+            }
 
-            // Break the ACL link to prevent auto-reconnect
-            DisconnectBluetoothAcl(addr);
+            // Break the Classic ACL link to prevent auto-reconnect
+            if (devType == DeviceType::Classic)
+                DisconnectBluetoothAcl(addr);
         }(btAddress, type);
     }
 }

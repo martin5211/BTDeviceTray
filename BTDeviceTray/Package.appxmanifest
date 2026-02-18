@@ -9,7 +9,7 @@
   <Identity
     Name="MartinCaminoa.BTDeviceTray"
     Publisher="CN=2531662B-4082-4584-89F5-F5BF3F2C17BC"
-    Version="1.0.0.0" />
+    Version="1.0.1.0" />
 
   <mp:PhoneIdentity PhoneProductId="0699157b-d1c2-48ee-80de-e994d53d59d9" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
@@ -21,6 +21,7 @@
 
   <Dependencies>
     <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+    <PackageDependency Name="Microsoft.VCLibs.140.00.UWPDesktop" MinVersion="14.0.30704.0" Publisher="CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US" />
   </Dependencies>
 
   <Resources>

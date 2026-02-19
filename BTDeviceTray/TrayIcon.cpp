@@ -16,8 +16,7 @@ static void EnableDarkModeMenus()
         SetPreferredAppMode(PAM_AllowDark);
 }
 
-static constexpr wchar_t STARTUP_REG_KEY[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-static constexpr wchar_t STARTUP_REG_VALUE[] = L"BT Device Tray";
+static constexpr wchar_t STARTUP_TASK_ID[] = L"BTDeviceTrayStartup";
 
 TrayIcon::TrayIcon() = default;
 
@@ -213,37 +212,32 @@ LRESULT TrayIcon::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
 bool TrayIcon::IsStartupEnabled()
 {
-    HKEY hKey = nullptr;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, STARTUP_REG_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+    try
+    {
+        auto task = winrt::Windows::ApplicationModel::StartupTask::GetAsync(STARTUP_TASK_ID).get();
+        auto state = task.State();
+        return state == winrt::Windows::ApplicationModel::StartupTaskState::Enabled
+            || state == winrt::Windows::ApplicationModel::StartupTaskState::EnabledByPolicy;
+    }
+    catch (...)
+    {
         return false;
-    DWORD type = 0;
-    bool exists = (RegQueryValueExW(hKey, STARTUP_REG_VALUE, nullptr, &type, nullptr, nullptr) == ERROR_SUCCESS);
-    RegCloseKey(hKey);
-    return exists;
+    }
 }
 
 void TrayIcon::SetStartupEnabled(bool enable)
 {
-    HKEY hKey = nullptr;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, STARTUP_REG_KEY, 0, KEY_WRITE, &hKey) != ERROR_SUCCESS)
-        return;
-
-    if (enable)
+    try
     {
-        wchar_t exePath[MAX_PATH];
-        GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-        // Quote the path in case it contains spaces
-        std::wstring value = L"\"" + std::wstring(exePath) + L"\"";
-        RegSetValueExW(hKey, STARTUP_REG_VALUE, 0, REG_SZ,
-            reinterpret_cast<const BYTE*>(value.c_str()),
-            static_cast<DWORD>((value.length() + 1) * sizeof(wchar_t)));
+        auto task = winrt::Windows::ApplicationModel::StartupTask::GetAsync(STARTUP_TASK_ID).get();
+        if (enable)
+            task.RequestEnableAsync().get();
+        else
+            task.Disable();
     }
-    else
+    catch (...)
     {
-        RegDeleteValueW(hKey, STARTUP_REG_VALUE);
     }
-
-    RegCloseKey(hKey);
 }
 
 static constexpr int IDC_ABOUT_LINK = 101;

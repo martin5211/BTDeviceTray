@@ -93,5 +93,6 @@
       <Filter>Resource Files</Filter>
     </None>
     <None Include="packages.config" />
+    <None Include="Package.StoreAssociation.xml" />
   </ItemGroup>
 </Project>

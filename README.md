@@ -1,5 +1,7 @@
 # BT Device Tray
 
+[<img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft Store" width="200"/>](https://apps.microsoft.com/detail/9pk24fl03s3w?hl=en-US&gl=US)
+
 A lightweight Windows system tray utility for managing Bluetooth device connections and monitoring battery levels. Quickly connect, disconnect, and check the status of your paired Bluetooth devices without opening Windows Settings.
 
 ## Features
@@ -13,7 +15,7 @@ A lightweight Windows system tray utility for managing Bluetooth device connecti
 
 ## How to Use
 
-1. **Install** from the [Microsoft Store](https://apps.microsoft.com/detail/BTDeviceTray) or build from source. The Windows Store version has the same features as the GitHub release version. You can support development by purchasing it on the Windows Store.
+1. **Install** from the [Microsoft Store](https://apps.microsoft.com/detail/9pk24fl03s3w?hl=en-US&gl=US) or build from source. The Windows Store version has the same features as the GitHub release version. You can support development by purchasing it on the Windows Store.
 2. The app starts in the **system tray** (notification area near the clock)
 3. **Left-click or right-click** the tray icon to open the device menu
 4. Your **paired Bluetooth devices** are listed with their connection status and battery level

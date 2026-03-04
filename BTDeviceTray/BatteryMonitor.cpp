@@ -192,82 +192,10 @@ winrt::fire_and_forget BatteryMonitor::PollLoop()
                 if (!device.isConnected)
                     continue;
 
-                // Skip devices that already have battery from the DeviceWatcher
-                if (device.batteryLevel.has_value())
-                    continue;
-
                 bool gotBattery = false;
 
-                // Strategy 1: GATT Battery Service (BLE and dual-mode devices)
-                try
-                {
-                    WDB::BluetoothLEDevice bleDevice{ nullptr };
-
-                    if (device.type == DeviceType::BLE)
-                    {
-                        bleDevice = co_await WDB::BluetoothLEDevice::FromIdAsync(device.id);
-                    }
-                    else if (device.bluetoothAddress != 0)
-                    {
-                        bleDevice = co_await WDB::BluetoothLEDevice::FromBluetoothAddressAsync(
-                            device.bluetoothAddress);
-                    }
-
-                    if (bleDevice)
-                    {
-                        auto servicesResult = co_await bleDevice.GetGattServicesForUuidAsync(
-                            BATTERY_SERVICE_UUID,
-                            WDB::BluetoothCacheMode::Cached);
-
-                        if (servicesResult.Status() != WDBG::GattCommunicationStatus::Success ||
-                            servicesResult.Services().Size() == 0)
-                        {
-                            servicesResult = co_await bleDevice.GetGattServicesForUuidAsync(
-                                BATTERY_SERVICE_UUID,
-                                WDB::BluetoothCacheMode::Uncached);
-                        }
-
-                        if (servicesResult.Status() == WDBG::GattCommunicationStatus::Success &&
-                            servicesResult.Services().Size() > 0)
-                        {
-                            auto charsResult = co_await servicesResult.Services().GetAt(0)
-                                .GetCharacteristicsForUuidAsync(
-                                    BATTERY_LEVEL_UUID,
-                                    WDB::BluetoothCacheMode::Cached);
-
-                            if (charsResult.Status() != WDBG::GattCommunicationStatus::Success ||
-                                charsResult.Characteristics().Size() == 0)
-                            {
-                                charsResult = co_await servicesResult.Services().GetAt(0)
-                                    .GetCharacteristicsForUuidAsync(
-                                        BATTERY_LEVEL_UUID,
-                                        WDB::BluetoothCacheMode::Uncached);
-                            }
-
-                            if (charsResult.Status() == WDBG::GattCommunicationStatus::Success &&
-                                charsResult.Characteristics().Size() > 0)
-                            {
-                                auto readResult = co_await charsResult.Characteristics().GetAt(0)
-                                    .ReadValueAsync(WDB::BluetoothCacheMode::Uncached);
-
-                                if (readResult.Status() == WDBG::GattCommunicationStatus::Success)
-                                {
-                                    auto reader = WSS::DataReader::FromBuffer(readResult.Value());
-                                    uint8_t level = reader.ReadByte();
-                                    if (level <= 100 && m_batteryCallback)
-                                    {
-                                        m_batteryCallback(device.id, level);
-                                        gotBattery = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                catch (...) {}
-
-                // Strategy 2: PnP device properties (Classic BT with HFP battery)
-                if (!gotBattery && device.bluetoothAddress != 0)
+                // Strategy 1: PnP device properties (matches Windows Bluetooth Settings)
+                if (device.bluetoothAddress != 0)
                 {
                     co_await winrt::resume_background();
                     auto level = GetBatteryFromPnP(device.bluetoothAddress, firstPoll);
@@ -276,6 +204,77 @@ winrt::fire_and_forget BatteryMonitor::PollLoop()
                         m_batteryCallback(device.id, level.value());
                         gotBattery = true;
                     }
+                }
+
+                // Strategy 2: GATT Battery Service (BLE and dual-mode devices)
+                if (!gotBattery)
+                {
+                    try
+                    {
+                        WDB::BluetoothLEDevice bleDevice{ nullptr };
+
+                        if (device.type == DeviceType::BLE)
+                        {
+                            bleDevice = co_await WDB::BluetoothLEDevice::FromIdAsync(device.id);
+                        }
+                        else if (device.bluetoothAddress != 0)
+                        {
+                            bleDevice = co_await WDB::BluetoothLEDevice::FromBluetoothAddressAsync(
+                                device.bluetoothAddress);
+                        }
+
+                        if (bleDevice)
+                        {
+                            auto servicesResult = co_await bleDevice.GetGattServicesForUuidAsync(
+                                BATTERY_SERVICE_UUID,
+                                WDB::BluetoothCacheMode::Cached);
+
+                            if (servicesResult.Status() != WDBG::GattCommunicationStatus::Success ||
+                                servicesResult.Services().Size() == 0)
+                            {
+                                servicesResult = co_await bleDevice.GetGattServicesForUuidAsync(
+                                    BATTERY_SERVICE_UUID,
+                                    WDB::BluetoothCacheMode::Uncached);
+                            }
+
+                            if (servicesResult.Status() == WDBG::GattCommunicationStatus::Success &&
+                                servicesResult.Services().Size() > 0)
+                            {
+                                auto charsResult = co_await servicesResult.Services().GetAt(0)
+                                    .GetCharacteristicsForUuidAsync(
+                                        BATTERY_LEVEL_UUID,
+                                        WDB::BluetoothCacheMode::Cached);
+
+                                if (charsResult.Status() != WDBG::GattCommunicationStatus::Success ||
+                                    charsResult.Characteristics().Size() == 0)
+                                {
+                                    charsResult = co_await servicesResult.Services().GetAt(0)
+                                        .GetCharacteristicsForUuidAsync(
+                                            BATTERY_LEVEL_UUID,
+                                            WDB::BluetoothCacheMode::Uncached);
+                                }
+
+                                if (charsResult.Status() == WDBG::GattCommunicationStatus::Success &&
+                                    charsResult.Characteristics().Size() > 0)
+                                {
+                                    auto readResult = co_await charsResult.Characteristics().GetAt(0)
+                                        .ReadValueAsync(WDB::BluetoothCacheMode::Uncached);
+
+                                    if (readResult.Status() == WDBG::GattCommunicationStatus::Success)
+                                    {
+                                        auto reader = WSS::DataReader::FromBuffer(readResult.Value());
+                                        uint8_t level = reader.ReadByte();
+                                        if (level <= 100 && m_batteryCallback)
+                                        {
+                                            m_batteryCallback(device.id, level);
+                                            gotBattery = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch (...) {}
                 }
             }
         }

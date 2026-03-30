@@ -48,5 +48,6 @@ private:
     ExitCallback m_exitCallback;
 
     static constexpr UINT WM_TRAYICON = WM_APP + 1;
+    static constexpr UINT WM_DEFERRED_LAUNCH = WM_APP + 2;
     static constexpr UINT TRAY_ICON_ID = 1;
 };

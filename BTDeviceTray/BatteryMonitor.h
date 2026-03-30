@@ -3,6 +3,7 @@
 #include <string>
 #include <functional>
 #include <atomic>
+#include <mutex>
 #include <vector>
 #include "DeviceInfo.h"
 
@@ -29,6 +30,8 @@ private:
     winrt::fire_and_forget PollLoop();
 
     std::atomic<bool> m_running{ false };
+    winrt::handle m_doneEvent;
     DeviceSnapshotProvider m_deviceProvider;
+    std::mutex m_callbackMutex;
     BatteryUpdatedCallback m_batteryCallback;
 };

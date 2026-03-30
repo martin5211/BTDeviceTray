@@ -7,3 +7,4 @@
 #define IDM_STARTUP      2001
 #define IDM_ABOUT        2002
 #define IDM_EXIT         2000
+#define IDM_ADD_DEVICE   2003

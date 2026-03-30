@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "TrayIcon.h"
 #include "resource.h"
+#include <future>
+#include <cassert>
 
 // Undocumented uxtheme.dll API for dark mode support
 enum PreferredAppMode { PAM_Default = 0, PAM_AllowDark = 1, PAM_ForceDark = 2, PAM_ForceLight = 3 };
@@ -183,6 +185,10 @@ LRESULT TrayIcon::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         {
             SetStartupEnabled(!IsStartupEnabled());
         }
+        else if (cmdId == IDM_ADD_DEVICE)
+        {
+            PostMessageW(m_hwnd, WM_DEFERRED_LAUNCH, 0, 0);
+        }
         else if (cmdId == IDM_ABOUT)
         {
             ShowAboutDialog();
@@ -202,6 +208,10 @@ LRESULT TrayIcon::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 0;
     }
 
+    case WM_DEFERRED_LAUNCH:
+        ShellExecuteW(nullptr, L"open", L"ms-settings:bluetooth", nullptr, nullptr, SW_SHOWNORMAL);
+        return 0;
+
     case WM_DESTROY:
         RemoveTrayIcon();
         return 0;
@@ -214,10 +224,27 @@ bool TrayIcon::IsStartupEnabled()
 {
     try
     {
-        auto task = winrt::Windows::ApplicationModel::StartupTask::GetAsync(STARTUP_TASK_ID).get();
-        auto state = task.State();
-        return state == winrt::Windows::ApplicationModel::StartupTaskState::Enabled
-            || state == winrt::Windows::ApplicationModel::StartupTaskState::EnabledByPolicy;
+        auto future = std::async(std::launch::async, []() -> bool
+        {
+            winrt::init_apartment();
+            try
+            {
+                auto task = winrt::Windows::ApplicationModel::StartupTask::GetAsync(STARTUP_TASK_ID).get();
+                auto state = task.State();
+                bool enabled = state == winrt::Windows::ApplicationModel::StartupTaskState::Enabled
+                    || state == winrt::Windows::ApplicationModel::StartupTaskState::EnabledByPolicy;
+                winrt::uninit_apartment();
+                return enabled;
+            }
+            catch (...)
+            {
+                winrt::uninit_apartment();
+                return false;
+            }
+        });
+        if (future.wait_for(std::chrono::seconds(2)) == std::future_status::timeout)
+            return false;
+        return future.get();
     }
     catch (...)
     {
@@ -229,11 +256,21 @@ void TrayIcon::SetStartupEnabled(bool enable)
 {
     try
     {
-        auto task = winrt::Windows::ApplicationModel::StartupTask::GetAsync(STARTUP_TASK_ID).get();
-        if (enable)
-            task.RequestEnableAsync().get();
-        else
-            task.Disable();
+        auto future = std::async(std::launch::async, [enable]()
+        {
+            winrt::init_apartment();
+            try
+            {
+                auto task = winrt::Windows::ApplicationModel::StartupTask::GetAsync(STARTUP_TASK_ID).get();
+                if (enable)
+                    task.RequestEnableAsync().get();
+                else
+                    task.Disable();
+            }
+            catch (...) {}
+            winrt::uninit_apartment();
+        });
+        future.wait_for(std::chrono::seconds(3));
     }
     catch (...)
     {
@@ -279,6 +316,7 @@ static INT_PTR CALLBACK AboutDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                     BOOL dark = TRUE;
                     fn(hwnd, 20, &dark, sizeof(dark));
                 }
+                FreeLibrary(hDwm);
             }
         }
 
@@ -366,7 +404,11 @@ static BYTE* WriteWideString(BYTE* p, const wchar_t* s)
 
 void TrayIcon::ShowAboutDialog()
 {
-    BYTE buffer[2048] = {};
+    static bool s_aboutOpen = false;
+    if (s_aboutOpen) return;
+    s_aboutOpen = true;
+
+    BYTE buffer[4096] = {};
     BYTE* p = buffer;
 
     constexpr int DLG_W = 210, DLG_H = 95;
@@ -425,7 +467,9 @@ void TrayIcon::ShowAboutDialog()
     p = WriteWideString(p, L"OK");
     *reinterpret_cast<WORD*>(p) = 0; p += sizeof(WORD);
 
+    assert(p <= buffer + sizeof(buffer));
     DialogBoxIndirectW(m_hInstance, reinterpret_cast<DLGTEMPLATE*>(buffer), m_hwnd, AboutDlgProc);
+    s_aboutOpen = false;
 }
 
 void TrayIcon::ShowContextMenu()
@@ -460,6 +504,8 @@ void TrayIcon::ShowContextMenu()
         }
     }
 
+    AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(hMenu, MF_STRING, IDM_ADD_DEVICE, L"Add a device");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(hMenu, IsStartupEnabled() ? (MF_STRING | MF_CHECKED) : MF_STRING,
         IDM_STARTUP, L"Run on startup");

@@ -156,7 +156,10 @@ BatteryMonitor::~BatteryMonitor()
 
 void BatteryMonitor::Start(DeviceSnapshotProvider provider)
 {
+    if (m_running)
+        return;
     m_deviceProvider = std::move(provider);
+    m_doneEvent.attach(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     m_running = true;
     PollLoop();
 }
@@ -164,10 +167,13 @@ void BatteryMonitor::Start(DeviceSnapshotProvider provider)
 void BatteryMonitor::Stop()
 {
     m_running = false;
+    if (m_doneEvent)
+        WaitForSingleObject(m_doneEvent.get(), 5000);
 }
 
 void BatteryMonitor::SetBatteryUpdatedCallback(BatteryUpdatedCallback callback)
 {
+    std::lock_guard lock(m_callbackMutex);
     m_batteryCallback = std::move(callback);
 }
 
@@ -198,11 +204,18 @@ winrt::fire_and_forget BatteryMonitor::PollLoop()
                 if (device.bluetoothAddress != 0)
                 {
                     co_await winrt::resume_background();
+                    if (!m_running) break;
+
                     auto level = GetBatteryFromPnP(device.bluetoothAddress, firstPoll);
-                    if (level.has_value() && m_batteryCallback)
+                    if (level.has_value())
                     {
-                        m_batteryCallback(device.id, level.value());
-                        gotBattery = true;
+                        BatteryUpdatedCallback cb;
+                        { std::lock_guard lock(m_callbackMutex); cb = m_batteryCallback; }
+                        if (cb)
+                        {
+                            cb(device.id, level.value());
+                            gotBattery = true;
+                        }
                     }
                 }
 
@@ -223,6 +236,8 @@ winrt::fire_and_forget BatteryMonitor::PollLoop()
                                 device.bluetoothAddress);
                         }
 
+                        if (!m_running) break;
+
                         if (bleDevice)
                         {
                             auto servicesResult = co_await bleDevice.GetGattServicesForUuidAsync(
@@ -236,6 +251,8 @@ winrt::fire_and_forget BatteryMonitor::PollLoop()
                                     BATTERY_SERVICE_UUID,
                                     WDB::BluetoothCacheMode::Uncached);
                             }
+
+                            if (!m_running) break;
 
                             if (servicesResult.Status() == WDBG::GattCommunicationStatus::Success &&
                                 servicesResult.Services().Size() > 0)
@@ -254,6 +271,8 @@ winrt::fire_and_forget BatteryMonitor::PollLoop()
                                             WDB::BluetoothCacheMode::Uncached);
                                 }
 
+                                if (!m_running) break;
+
                                 if (charsResult.Status() == WDBG::GattCommunicationStatus::Success &&
                                     charsResult.Characteristics().Size() > 0)
                                 {
@@ -264,10 +283,15 @@ winrt::fire_and_forget BatteryMonitor::PollLoop()
                                     {
                                         auto reader = WSS::DataReader::FromBuffer(readResult.Value());
                                         uint8_t level = reader.ReadByte();
-                                        if (level <= 100 && m_batteryCallback)
+                                        if (level <= 100)
                                         {
-                                            m_batteryCallback(device.id, level);
-                                            gotBattery = true;
+                                            BatteryUpdatedCallback cb;
+                                            { std::lock_guard lock(m_callbackMutex); cb = m_batteryCallback; }
+                                            if (cb)
+                                            {
+                                                cb(device.id, level);
+                                                gotBattery = true;
+                                            }
                                         }
                                     }
                                 }
@@ -284,4 +308,8 @@ winrt::fire_and_forget BatteryMonitor::PollLoop()
         // Wait 30 seconds before next poll
         co_await winrt::resume_after(std::chrono::seconds(30));
     }
+
+    // Signal completion so Stop() can return
+    if (m_doneEvent)
+        SetEvent(m_doneEvent.get());
 }

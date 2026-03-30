@@ -239,11 +239,13 @@ static bool ReconnectBluetoothAudio(uint64_t btAddress, bool connect)
                 winrt::com_ptr<IDeviceTopology> filterTopology;
                 if (FAILED(part->GetTopologyObject(filterTopology.put())) || !filterTopology) continue;
 
-                LPWSTR filterId = nullptr;
-                if (FAILED(filterTopology->GetDeviceId(&filterId)) || !filterId) continue;
+                LPWSTR rawFilterId = nullptr;
+                if (FAILED(filterTopology->GetDeviceId(&rawFilterId)) || !rawFilterId) continue;
+                // RAII wrapper to ensure CoTaskMemFree on all paths
+                std::unique_ptr<wchar_t, decltype(&CoTaskMemFree)> filterId(rawFilterId, CoTaskMemFree);
 
                 // Check if this is a Bluetooth audio filter matching our device address
-                std::wstring filterUpper(filterId);
+                std::wstring filterUpper(filterId.get());
                 std::transform(filterUpper.begin(), filterUpper.end(), filterUpper.begin(), ::towupper);
 
                 bool isBluetooth = (filterUpper.find(L"\\\\?\\BTH") != std::wstring::npos);
@@ -251,10 +253,10 @@ static bool ReconnectBluetoothAudio(uint64_t btAddress, bool connect)
 
                 if (isBluetooth && addressMatch)
                 {
-                    DebugLog(L"[BTDevTray] Matched BT audio filter: %s\n", filterId);
+                    DebugLog(L"[BTDevTray] Matched BT audio filter: %s\n", filterId.get());
 
                     winrt::com_ptr<IMMDevice> filterDevice;
-                    hr = enumerator->GetDevice(filterId, filterDevice.put());
+                    hr = enumerator->GetDevice(filterId.get(), filterDevice.put());
                     if (SUCCEEDED(hr) && filterDevice)
                     {
                         winrt::com_ptr<IKsControl> ksControl;
@@ -278,8 +280,6 @@ static bool ReconnectBluetoothAudio(uint64_t btAddress, bool connect)
                         }
                     }
                 }
-
-                CoTaskMemFree(filterId);
             }
         }
     }
@@ -297,6 +297,10 @@ BluetoothDeviceManager::~BluetoothDeviceManager()
 
 void BluetoothDeviceManager::Start()
 {
+    // Guard against double Start
+    if (m_classicWatcher || m_bleWatcher)
+        return;
+
     // Properties to request
     std::vector<winrt::hstring> requestedProperties{
         PROP_IS_CONNECTED,
@@ -350,9 +354,9 @@ void BluetoothDeviceManager::Stop()
         {
             m_classicWatcher.Stop();
         }
-        m_classicWatcher.Added(m_classicAdded);
-        m_classicWatcher.Updated(m_classicUpdated);
-        m_classicWatcher.Removed(m_classicRemoved);
+        m_classicWatcher.Added(std::exchange(m_classicAdded, {}));
+        m_classicWatcher.Updated(std::exchange(m_classicUpdated, {}));
+        m_classicWatcher.Removed(std::exchange(m_classicRemoved, {}));
         m_classicWatcher = nullptr;
     }
 
@@ -364,9 +368,9 @@ void BluetoothDeviceManager::Stop()
         {
             m_bleWatcher.Stop();
         }
-        m_bleWatcher.Added(m_bleAdded);
-        m_bleWatcher.Updated(m_bleUpdated);
-        m_bleWatcher.Removed(m_bleRemoved);
+        m_bleWatcher.Added(std::exchange(m_bleAdded, {}));
+        m_bleWatcher.Updated(std::exchange(m_bleUpdated, {}));
+        m_bleWatcher.Removed(std::exchange(m_bleRemoved, {}));
         m_bleWatcher = nullptr;
     }
 
@@ -564,15 +568,21 @@ void BluetoothDeviceManager::ConnectAsync(const std::wstring& deviceId)
 
     if (type == DeviceType::BLE)
     {
-        [](std::wstring devId, uint64_t addr, BluetoothDeviceManager* self) -> winrt::fire_and_forget
+        [](std::wstring devId, uint64_t addr, std::weak_ptr<BluetoothDeviceManager> weak) -> winrt::fire_and_forget
         {
             try
             {
                 auto device = co_await WDB::BluetoothLEDevice::FromBluetoothAddressAsync(addr);
+                auto self = weak.lock();
+                if (!self) co_return;
+
                 if (device)
                 {
                     DebugLog(L"[BTDevTray] BLE device obtained, getting GATT services...\n");
                     co_await device.GetGattServicesAsync();
+                    self = weak.lock();
+                    if (!self) co_return;
+
                     // Store reference to keep connection alive
                     std::lock_guard lock(self->m_mutex);
                     self->m_activeBle.insert_or_assign(devId, device);
@@ -587,18 +597,21 @@ void BluetoothDeviceManager::ConnectAsync(const std::wstring& deviceId)
                 DebugLog(L"[BTDevTray] BLE connect exception\n");
             }
 
+            if (auto self = weak.lock())
             {
-                std::lock_guard lock(self->m_mutex);
-                auto it = self->m_devices.find(devId);
-                if (it != self->m_devices.end())
-                    it->second.isConnecting = false;
+                {
+                    std::lock_guard lock(self->m_mutex);
+                    auto it = self->m_devices.find(devId);
+                    if (it != self->m_devices.end())
+                        it->second.isConnecting = false;
+                }
+                self->NotifyChanged();
             }
-            self->NotifyChanged();
-        }(deviceId, btAddress, this);
+        }(deviceId, btAddress, weak_from_this());
     }
     else
     {
-        [](std::wstring devId, uint64_t addr, BluetoothDeviceManager* self) -> winrt::fire_and_forget
+        [](std::wstring devId, uint64_t addr, std::weak_ptr<BluetoothDeviceManager> weak) -> winrt::fire_and_forget
         {
             co_await winrt::resume_background();
             try
@@ -613,9 +626,15 @@ void BluetoothDeviceManager::ConnectAsync(const std::wstring& deviceId)
                     DebugLog(L"[BTDevTray] Audio reconnect not available, trying RFCOMM hold...\n");
                     // Fallback for non-audio devices: hold device reference (establishes ACL)
                     auto device = co_await WDB::BluetoothDevice::FromBluetoothAddressAsync(addr);
+                    auto self = weak.lock();
+                    if (!self) co_return;
+
                     if (device)
                     {
                         co_await device.GetRfcommServicesAsync(WDB::BluetoothCacheMode::Uncached);
+                        self = weak.lock();
+                        if (!self) co_return;
+
                         std::lock_guard lock(self->m_mutex);
                         self->m_activeClassic.insert_or_assign(devId, device);
                         DebugLog(L"[BTDevTray] RFCOMM hold established as fallback\n");
@@ -626,14 +645,17 @@ void BluetoothDeviceManager::ConnectAsync(const std::wstring& deviceId)
                 DebugLog(L"[BTDevTray] Classic connect exception\n");
             }
 
+            if (auto self = weak.lock())
             {
-                std::lock_guard lock(self->m_mutex);
-                auto it = self->m_devices.find(devId);
-                if (it != self->m_devices.end())
-                    it->second.isConnecting = false;
+                {
+                    std::lock_guard lock(self->m_mutex);
+                    auto it = self->m_devices.find(devId);
+                    if (it != self->m_devices.end())
+                        it->second.isConnecting = false;
+                }
+                self->NotifyChanged();
             }
-            self->NotifyChanged();
-        }(deviceId, btAddress, this);
+        }(deviceId, btAddress, weak_from_this());
     }
 }
 
@@ -733,11 +755,17 @@ void BluetoothDeviceManager::UpdateBatteryLevel(const std::wstring& deviceId, ui
 
 void BluetoothDeviceManager::SetDeviceListChangedCallback(DeviceListChangedCallback callback)
 {
+    std::lock_guard lock(m_callbackMutex);
     m_changedCallback = std::move(callback);
 }
 
 void BluetoothDeviceManager::NotifyChanged()
 {
-    if (m_changedCallback)
-        m_changedCallback();
+    DeviceListChangedCallback cb;
+    {
+        std::lock_guard lock(m_callbackMutex);
+        cb = m_changedCallback;
+    }
+    if (cb)
+        cb();
 }

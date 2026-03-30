@@ -6,13 +6,14 @@
 #include <unordered_map>
 #include <mutex>
 #include <functional>
+#include <memory>
 
 namespace winrt
 {
     namespace WDE = Windows::Devices::Enumeration;
 }
 
-class BluetoothDeviceManager
+class BluetoothDeviceManager : public std::enable_shared_from_this<BluetoothDeviceManager>
 {
 public:
     using DeviceListChangedCallback = std::function<void()>;
@@ -66,5 +67,6 @@ private:
     winrt::event_token m_bleUpdated;
     winrt::event_token m_bleRemoved;
 
+    std::mutex m_callbackMutex;
     DeviceListChangedCallback m_changedCallback;
 };

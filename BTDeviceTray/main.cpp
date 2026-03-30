@@ -5,7 +5,7 @@
 #include <memory>
 
 static std::unique_ptr<TrayIcon> g_trayIcon;
-static std::unique_ptr<BluetoothDeviceManager> g_btManager;
+static std::shared_ptr<BluetoothDeviceManager> g_btManager;
 static std::unique_ptr<BatteryMonitor> g_batteryMonitor;
 
 static void OnDeviceListChanged()
@@ -70,7 +70,7 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ PWSTR, _I
     }
 
     // Initialize Bluetooth device manager
-    g_btManager = std::make_unique<BluetoothDeviceManager>();
+    g_btManager = std::make_shared<BluetoothDeviceManager>();
     g_btManager->SetDeviceListChangedCallback(OnDeviceListChanged);
     g_btManager->Start();
 

@@ -10,7 +10,7 @@
   <Identity
     Name="MartinCaminoa.BTDeviceTray"
     Publisher="CN=2531662B-4082-4584-89F5-F5BF3F2C17BC"
-    Version="1.0.4.0" />
+    Version="1.0.5.0" />
 
   <mp:PhoneIdentity PhoneProductId="0699157b-d1c2-48ee-80de-e994d53d59d9" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 

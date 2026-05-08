@@ -310,38 +310,53 @@ void BluetoothDeviceManager::Start()
 
     auto propList = winrt::single_threaded_vector(std::move(requestedProperties));
 
-    // Classic Bluetooth watcher
-    auto classicSelector = WDB::BluetoothDevice::GetDeviceSelectorFromPairingState(true);
-    m_classicWatcher = WDE::DeviceInformation::CreateWatcher(
-        classicSelector,
-        propList,
-        WDE::DeviceInformationKind::AssociationEndpoint);
+    // Classic Bluetooth watcher — isolated so a failure doesn't prevent BLE setup
+    try
+    {
+        auto classicSelector = WDB::BluetoothDevice::GetDeviceSelectorFromPairingState(true);
+        m_classicWatcher = WDE::DeviceInformation::CreateWatcher(
+            classicSelector,
+            propList,
+            WDE::DeviceInformationKind::AssociationEndpoint);
 
-    m_classicAdded = m_classicWatcher.Added({ this, &BluetoothDeviceManager::OnClassicDeviceAdded });
-    m_classicUpdated = m_classicWatcher.Updated({ this, &BluetoothDeviceManager::OnClassicDeviceUpdated });
-    m_classicRemoved = m_classicWatcher.Removed({ this, &BluetoothDeviceManager::OnClassicDeviceRemoved });
+        m_classicAdded = m_classicWatcher.Added({ this, &BluetoothDeviceManager::OnClassicDeviceAdded });
+        m_classicUpdated = m_classicWatcher.Updated({ this, &BluetoothDeviceManager::OnClassicDeviceUpdated });
+        m_classicRemoved = m_classicWatcher.Removed({ this, &BluetoothDeviceManager::OnClassicDeviceRemoved });
+
+        m_classicWatcher.Start();
+    }
+    catch (...)
+    {
+        m_classicWatcher = nullptr;
+    }
 
     // BLE watcher
-    auto bleSelector = WDB::BluetoothLEDevice::GetDeviceSelectorFromPairingState(true);
+    try
+    {
+        auto bleSelector = WDB::BluetoothLEDevice::GetDeviceSelectorFromPairingState(true);
 
-    std::vector<winrt::hstring> bleRequestedProperties{
-        PROP_IS_CONNECTED,
-        PROP_DEVICE_ADDRESS,
-        PROP_BATTERY_PERCENT
-    };
-    auto blePropList = winrt::single_threaded_vector(std::move(bleRequestedProperties));
+        std::vector<winrt::hstring> bleRequestedProperties{
+            PROP_IS_CONNECTED,
+            PROP_DEVICE_ADDRESS,
+            PROP_BATTERY_PERCENT
+        };
+        auto blePropList = winrt::single_threaded_vector(std::move(bleRequestedProperties));
 
-    m_bleWatcher = WDE::DeviceInformation::CreateWatcher(
-        bleSelector,
-        blePropList,
-        WDE::DeviceInformationKind::AssociationEndpoint);
+        m_bleWatcher = WDE::DeviceInformation::CreateWatcher(
+            bleSelector,
+            blePropList,
+            WDE::DeviceInformationKind::AssociationEndpoint);
 
-    m_bleAdded = m_bleWatcher.Added({ this, &BluetoothDeviceManager::OnBleDeviceAdded });
-    m_bleUpdated = m_bleWatcher.Updated({ this, &BluetoothDeviceManager::OnBleDeviceUpdated });
-    m_bleRemoved = m_bleWatcher.Removed({ this, &BluetoothDeviceManager::OnBleDeviceRemoved });
+        m_bleAdded = m_bleWatcher.Added({ this, &BluetoothDeviceManager::OnBleDeviceAdded });
+        m_bleUpdated = m_bleWatcher.Updated({ this, &BluetoothDeviceManager::OnBleDeviceUpdated });
+        m_bleRemoved = m_bleWatcher.Removed({ this, &BluetoothDeviceManager::OnBleDeviceRemoved });
 
-    m_classicWatcher.Start();
-    m_bleWatcher.Start();
+        m_bleWatcher.Start();
+    }
+    catch (...)
+    {
+        m_bleWatcher = nullptr;
+    }
 }
 
 void BluetoothDeviceManager::Stop()

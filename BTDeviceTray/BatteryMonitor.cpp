@@ -159,6 +159,7 @@ void BatteryMonitor::Start(DeviceSnapshotProvider provider)
     if (m_running)
         return;
     m_deviceProvider = std::move(provider);
+    m_stopEvent.attach(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     m_doneEvent.attach(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     m_running = true;
     PollLoop();
@@ -167,8 +168,10 @@ void BatteryMonitor::Start(DeviceSnapshotProvider provider)
 void BatteryMonitor::Stop()
 {
     m_running = false;
+    if (m_stopEvent)
+        SetEvent(m_stopEvent.get());
     if (m_doneEvent)
-        WaitForSingleObject(m_doneEvent.get(), 5000);
+        WaitForSingleObject(m_doneEvent.get(), 3000);
 }
 
 void BatteryMonitor::SetBatteryUpdatedCallback(BatteryUpdatedCallback callback)
@@ -179,8 +182,13 @@ void BatteryMonitor::SetBatteryUpdatedCallback(BatteryUpdatedCallback callback)
 
 winrt::fire_and_forget BatteryMonitor::PollLoop()
 {
-    // Wait for DeviceWatcher to finish initial enumeration
-    co_await winrt::resume_after(std::chrono::seconds(5));
+    // Wait for DeviceWatcher to finish initial enumeration (cancellable)
+    co_await winrt::resume_background();
+    if (WaitForSingleObject(m_stopEvent.get(), 5000) == WAIT_OBJECT_0)
+    {
+        if (m_doneEvent) SetEvent(m_doneEvent.get());
+        co_return;
+    }
 
     bool firstPoll = true;
 
@@ -305,8 +313,9 @@ winrt::fire_and_forget BatteryMonitor::PollLoop()
 
         firstPoll = false;
 
-        // Wait 30 seconds before next poll
-        co_await winrt::resume_after(std::chrono::seconds(30));
+        // Wait 30 seconds before next poll (cancellable via stop event)
+        if (WaitForSingleObject(m_stopEvent.get(), 30000) == WAIT_OBJECT_0)
+            break;
     }
 
     // Signal completion so Stop() can return

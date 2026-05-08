@@ -65,11 +65,12 @@ bool TrayIcon::Initialize(HINSTANCE hInstance)
     if (!m_hwnd)
         return false;
 
-    AddTrayIcon();
+    if (!AddTrayIcon())
+        StartIconRetry();
     return true;
 }
 
-void TrayIcon::AddTrayIcon()
+bool TrayIcon::AddTrayIcon()
 {
     NOTIFYICONDATAW nid = {};
     nid.cbSize = sizeof(nid);
@@ -78,15 +79,30 @@ void TrayIcon::AddTrayIcon()
     nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
     nid.hIcon = LoadIconW(m_hInstance, MAKEINTRESOURCEW(IDI_BLUETRAY));
+    if (!nid.hIcon)
+        nid.hIcon = LoadIconW(nullptr, reinterpret_cast<LPCWSTR>(IDI_APPLICATION));
     wcscpy_s(nid.szTip, L"BT Device Tray");
 
-    Shell_NotifyIconW(NIM_ADD, &nid);
+    if (!Shell_NotifyIconW(NIM_ADD, &nid))
+        return false;
 
-    // Set version 4 for modern behavior
     nid.uVersion = NOTIFYICON_VERSION_4;
     Shell_NotifyIconW(NIM_SETVERSION, &nid);
 
     m_iconAdded = true;
+    return true;
+}
+
+void TrayIcon::StartIconRetry()
+{
+    m_iconRetryAttempts = 0;
+    SetTimer(m_hwnd, ICON_RETRY_TIMER_ID, ICON_RETRY_INTERVAL_MS, nullptr);
+}
+
+void TrayIcon::StopIconRetry()
+{
+    KillTimer(m_hwnd, ICON_RETRY_TIMER_ID);
+    m_iconRetryAttempts = 0;
 }
 
 void TrayIcon::RemoveTrayIcon()
@@ -105,6 +121,7 @@ void TrayIcon::RemoveTrayIcon()
 
 void TrayIcon::Remove()
 {
+    StopIconRetry();
     RemoveTrayIcon();
 }
 
@@ -151,12 +168,25 @@ LRESULT TrayIcon::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     {
         // Explorer restarted — re-add the tray icon
         m_iconAdded = false;
-        AddTrayIcon();
+        StopIconRetry();
+        if (!AddTrayIcon())
+            StartIconRetry();
         return 0;
     }
 
     switch (msg)
     {
+    case WM_TIMER:
+    {
+        if (wParam == ICON_RETRY_TIMER_ID)
+        {
+            if (AddTrayIcon() || ++m_iconRetryAttempts >= ICON_RETRY_MAX_ATTEMPTS)
+                StopIconRetry();
+            return 0;
+        }
+        break;
+    }
+
     case WM_TRAYICON:
     {
         // NOTIFYICON_VERSION_4: LOWORD(lParam) = event, HIWORD(lParam) = icon id

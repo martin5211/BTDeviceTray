@@ -30,8 +30,10 @@ private:
 
     void ShowContextMenu();
     void ShowAboutDialog();
-    void AddTrayIcon();
+    bool AddTrayIcon();
     void RemoveTrayIcon();
+    void StartIconRetry();
+    void StopIconRetry();
 
     static bool IsStartupEnabled();
     static void SetStartupEnabled(bool enable);
@@ -40,6 +42,7 @@ private:
     HINSTANCE m_hInstance = nullptr;
     bool m_iconAdded = false;
     UINT m_taskbarCreatedMsg = 0;
+    int m_iconRetryAttempts = 0;
 
     std::vector<DeviceInfo> m_devices;
     std::mutex m_devicesMutex;
@@ -50,4 +53,7 @@ private:
     static constexpr UINT WM_TRAYICON = WM_APP + 1;
     static constexpr UINT WM_DEFERRED_LAUNCH = WM_APP + 2;
     static constexpr UINT TRAY_ICON_ID = 1;
+    static constexpr UINT_PTR ICON_RETRY_TIMER_ID = 1;
+    static constexpr UINT ICON_RETRY_INTERVAL_MS = 1000;
+    static constexpr int ICON_RETRY_MAX_ATTEMPTS = 30;
 };

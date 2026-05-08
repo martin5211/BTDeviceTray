@@ -58,37 +58,46 @@ static void Shutdown()
 
 int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ PWSTR, _In_ int)
 {
-    winrt::init_apartment(winrt::apartment_type::single_threaded);
-
-    // Initialize tray icon
-    g_trayIcon = std::make_unique<TrayIcon>();
-    g_trayIcon->SetDeviceClickCallback(OnDeviceClicked);
-    g_trayIcon->SetExitCallback(Shutdown);
-    if (!g_trayIcon->Initialize(hInstance))
+    try
+    {
+        winrt::init_apartment(winrt::apartment_type::single_threaded);
+    }
+    catch (...)
     {
         return 1;
     }
 
-    // Initialize Bluetooth device manager
-    g_btManager = std::make_shared<BluetoothDeviceManager>();
-    g_btManager->SetDeviceListChangedCallback(OnDeviceListChanged);
-    g_btManager->Start();
-
-    // Initialize battery monitor
-    g_batteryMonitor = std::make_unique<BatteryMonitor>();
-    g_batteryMonitor->SetBatteryUpdatedCallback(OnBatteryUpdated);
-    g_batteryMonitor->Start([]() { return g_btManager->GetDevices(); });
-
-    // Run message loop
-    MSG msg;
-    while (GetMessageW(&msg, nullptr, 0, 0))
+    try
     {
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
+        g_trayIcon = std::make_unique<TrayIcon>();
+        g_trayIcon->SetDeviceClickCallback(OnDeviceClicked);
+        g_trayIcon->SetExitCallback(Shutdown);
+        if (!g_trayIcon->Initialize(hInstance))
+        {
+            return 1;
+        }
+
+        g_btManager = std::make_shared<BluetoothDeviceManager>();
+        g_btManager->SetDeviceListChangedCallback(OnDeviceListChanged);
+        g_btManager->Start();
+
+        g_batteryMonitor = std::make_unique<BatteryMonitor>();
+        g_batteryMonitor->SetBatteryUpdatedCallback(OnBatteryUpdated);
+        g_batteryMonitor->Start([]() { return g_btManager->GetDevices(); });
+
+        MSG msg;
+        while (GetMessageW(&msg, nullptr, 0, 0))
+        {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+
+        Shutdown();
+        return static_cast<int>(msg.wParam);
     }
-
-    // Cleanup (in case Shutdown wasn't called)
-    Shutdown();
-
-    return static_cast<int>(msg.wParam);
+    catch (...)
+    {
+        Shutdown();
+        return 1;
+    }
 }
